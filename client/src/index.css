@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: hsl(0, 0%, 100%);
+  --foreground: hsl(20, 14.3%, 4.1%);
+  --muted: hsl(60, 4.8%, 95.9%);
+  --muted-foreground: hsl(25, 5.3%, 44.7%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(20, 14.3%, 4.1%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(20, 14.3%, 4.1%);
+  --border: hsl(20, 5.9%, 90%);
+  --input: hsl(20, 5.9%, 90%);
+  --primary: hsl(207, 90%, 54%);
+  --primary-foreground: hsl(211, 100%, 99%);
+  --secondary: hsl(60, 4.8%, 95.9%);
+  --secondary-foreground: hsl(24, 9.8%, 10%);
+  --accent: hsl(60, 4.8%, 95.9%);
+  --accent-foreground: hsl(24, 9.8%, 10%);
+  --destructive: hsl(0, 84.2%, 60.2%);
+  --destructive-foreground: hsl(60, 9.1%, 97.8%);
+  --ring: hsl(20, 14.3%, 4.1%);
+  --radius: 0.5rem;
+  --video-dark: hsl(220, 26%, 14%);
+  --video-gray: hsl(220, 13%, 18%);
+  --video-control: hsl(220, 9%, 21%);
+  --video-accent: hsl(207, 90%, 54%);
+}
+
+.dark {
+  --background: hsl(240, 10%, 3.9%);
+  --foreground: hsl(0, 0%, 98%);
+  --muted: hsl(240, 3.7%, 15.9%);
+  --muted-foreground: hsl(240, 5%, 64.9%);
+  --popover: hsl(240, 10%, 3.9%);
+  --popover-foreground: hsl(0, 0%, 98%);
+  --card: hsl(240, 10%, 3.9%);
+  --card-foreground: hsl(0, 0%, 98%);
+  --border: hsl(240, 3.7%, 15.9%);
+  --input: hsl(240, 3.7%, 15.9%);
+  --primary: hsl(207, 90%, 54%);
+  --primary-foreground: hsl(211, 100%, 99%);
+  --secondary: hsl(240, 3.7%, 15.9%);
+  --secondary-foreground: hsl(0, 0%, 98%);
+  --accent: hsl(240, 3.7%, 15.9%);
+  --accent-foreground: hsl(0, 0%, 98%);
+  --destructive: hsl(0, 62.8%, 30.6%);
+  --destructive-foreground: hsl(0, 0%, 98%);
+  --ring: hsl(240, 4.9%, 83.9%);
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+/* Video Player Styles */
+.video-dark {
+  background-color: var(--video-dark);
+}
+
+.video-gray {
+  background-color: var(--video-gray);
+}
+
+.video-control {
+  background-color: var(--video-control);
+}
+
+.video-accent {
+  color: var(--video-accent);
+}
+
+.video-container {
+  position: relative;
+  background: hsl(0, 0%, 0%);
+}
+
+.control-overlay {
+  background: linear-gradient(to top, hsla(0, 0%, 0%, 0.8) 0%, hsla(0, 0%, 0%, 0.4) 50%, hsla(0, 0%, 0%, 0) 100%);
+  transition: opacity 0.3s ease;
+}
+
+.control-overlay.hidden {
+  opacity: 0;
+}
+
+.btn-control {
+  transition: all 0.2s ease;
+  backdrop-filter: blur(8px);
+}
+
+.btn-control:hover {
+  background-color: hsla(207, 90%, 54%, 0.2);
+  transform: scale(1.05);
+}
+
+.loading-spinner {
+  border: 3px solid hsla(207, 90%, 54%, 0.3);
+  border-top: 3px solid var(--video-accent);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.error-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.status-indicator {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  backdrop-filter: blur(8px);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.streaming {
+  background-color: hsla(142, 76%, 36%, 0.2);
+  color: hsl(142, 76%, 36%);
+  border: 1px solid hsla(142, 76%, 36%, 0.3);
+}
+
+.buffering {
+  background-color: hsla(38, 92%, 50%, 0.2);
+  color: hsl(38, 92%, 50%);
+  border: 1px solid hsla(38, 92%, 50%, 0.3);
+}
+
+.error {
+  background-color: hsla(0, 84%, 60%, 0.2);
+  color: hsl(0, 84%, 60%);
+  border: 1px solid hsla(0, 84%, 60%, 0.3);
+}
