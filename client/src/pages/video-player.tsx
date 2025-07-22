@@ -1,13 +1,10 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useRef, useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { useWebSocket } from "@/hooks/use-websocket";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Video, StreamSession } from "@shared/schema";
+import type { Video } from "@shared/schema";
 import { 
   Play, 
   Pause, 
@@ -15,11 +12,7 @@ import {
   RotateCw, 
   Volume2, 
   Maximize, 
-  RefreshCw, 
-  Square,
-  Info,
-  Settings,
-  TrendingUp
+  Info
 } from "lucide-react";
 
 export default function VideoPlayer() {
@@ -29,58 +22,27 @@ export default function VideoPlayer() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(80);
-  const [currentSession, setCurrentSession] = useState<StreamSession | null>(null);
-  const [seekTime, setSeekTime] = useState("");
+  const [currentVideo, setCurrentVideo] = useState<Video | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
-
-  const { isConnected, lastMessage, sendMessage } = useWebSocket();
 
   // Fetch available videos
   const { data: videos, isLoading: videosLoading } = useQuery<Video[]>({
     queryKey: ["/api/videos"],
   });
 
-  // Create streaming session mutation
-  const createSessionMutation = useMutation({
-    mutationFn: async (videoId: number) => {
-      const response = await apiRequest("POST", "/api/sessions", { videoId });
-      return response.json() as Promise<StreamSession>;
-    },
-    onSuccess: (session) => {
-      setCurrentSession(session);
-      if (videoRef.current && videos) {
-        const video = videos.find(v => v.id === session.videoId);
-        if (video) {
-          videoRef.current.src = `/api/videos/${video.id}/stream`;
-          setDuration(video.duration);
-        }
+  // Initialize with first video
+  useEffect(() => {
+    if (videos && videos.length > 0 && !currentVideo) {
+      const video = videos[0];
+      setCurrentVideo(video);
+      if (videoRef.current) {
+        const videoUrl = `/api/videos/${video.filename}/stream`;
+        console.log('Setting video URL:', videoUrl);
+        videoRef.current.src = videoUrl;
       }
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: "Failed to create streaming session",
-        variant: "destructive",
-      });
-      setHasError(true);
-    },
-  });
-
-  // Initialize session with first video
-  useEffect(() => {
-    if (videos && videos.length > 0 && !currentSession) {
-      createSessionMutation.mutate(videos[0].id);
     }
-  }, [videos]);
-
-  // Handle WebSocket messages
-  useEffect(() => {
-    if (lastMessage && lastMessage.type === 'status') {
-      setIsPlaying(lastMessage.isPlaying);
-      setCurrentTime(lastMessage.currentPosition);
-    }
-  }, [lastMessage]);
+  }, [videos, currentVideo]);
 
   // Update video time
   useEffect(() => {
@@ -95,6 +57,10 @@ export default function VideoPlayer() {
       setDuration(video.duration);
     };
 
+    const updatePlayState = () => {
+      setIsPlaying(!video.paused);
+    };
+
     const handleLoadStart = () => {
       setIsLoading(true);
       setHasError(false);
@@ -104,18 +70,21 @@ export default function VideoPlayer() {
       setIsLoading(false);
     };
 
-    const handleError = () => {
+    const handleError = (e: Event) => {
+      console.error('Video error:', e, video.error);
       setIsLoading(false);
       setHasError(true);
       toast({
         title: "Stream Error",
-        description: "Unable to load video stream",
+        description: `Unable to load video stream. Error code: ${video.error?.code}`,
         variant: "destructive",
       });
     };
 
     video.addEventListener('timeupdate', updateTime);
     video.addEventListener('durationchange', updateDuration);
+    video.addEventListener('play', updatePlayState);
+    video.addEventListener('pause', updatePlayState);
     video.addEventListener('loadstart', handleLoadStart);
     video.addEventListener('canplay', handleCanPlay);
     video.addEventListener('error', handleError);
@@ -123,6 +92,8 @@ export default function VideoPlayer() {
     return () => {
       video.removeEventListener('timeupdate', updateTime);
       video.removeEventListener('durationchange', updateDuration);
+      video.removeEventListener('play', updatePlayState);
+      video.removeEventListener('pause', updatePlayState);
       video.removeEventListener('loadstart', handleLoadStart);
       video.removeEventListener('canplay', handleCanPlay);
       video.removeEventListener('error', handleError);
@@ -143,64 +114,20 @@ export default function VideoPlayer() {
   };
 
   const togglePlayPause = () => {
-    if (!currentSession) return;
+    if (!videoRef.current) return;
 
     if (isPlaying) {
-      sendMessage({ type: 'pause', sessionId: currentSession.sessionId });
-      videoRef.current?.pause();
+      videoRef.current.pause();
     } else {
-      sendMessage({ type: 'play', sessionId: currentSession.sessionId });
-      videoRef.current?.play();
+      videoRef.current.play();
     }
   };
 
   const seekRelative = (seconds: number) => {
-    if (!videoRef.current || !currentSession) return;
+    if (!videoRef.current) return;
     
     const newTime = Math.max(0, Math.min(duration, currentTime + seconds));
     videoRef.current.currentTime = newTime;
-    sendMessage({ 
-      type: 'seek', 
-      sessionId: currentSession.sessionId, 
-      position: newTime 
-    });
-  };
-
-  const seekToTime = () => {
-    if (!seekTime || !videoRef.current || !currentSession) return;
-    
-    const [hours, minutes, seconds] = seekTime.split(':').map(Number);
-    const totalSeconds = (hours || 0) * 3600 + (minutes || 0) * 60 + (seconds || 0);
-    
-    if (totalSeconds <= duration) {
-      videoRef.current.currentTime = totalSeconds;
-      sendMessage({ 
-        type: 'seek', 
-        sessionId: currentSession.sessionId, 
-        position: totalSeconds 
-      });
-    }
-  };
-
-  const restartStream = () => {
-    if (!videoRef.current || !currentSession) return;
-    
-    videoRef.current.currentTime = 0;
-    sendMessage({ 
-      type: 'seek', 
-      sessionId: currentSession.sessionId, 
-      position: 0 
-    });
-  };
-
-  const stopStream = () => {
-    if (!currentSession) return;
-    
-    sendMessage({ type: 'stop', sessionId: currentSession.sessionId });
-    videoRef.current?.pause();
-    if (videoRef.current) {
-      videoRef.current.currentTime = 0;
-    }
   };
 
   const toggleFullscreen = () => {
@@ -212,18 +139,13 @@ export default function VideoPlayer() {
   };
 
   const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!videoRef.current || !currentSession) return;
+    if (!videoRef.current) return;
     
     const rect = e.currentTarget.getBoundingClientRect();
     const percent = (e.clientX - rect.left) / rect.width;
     const newTime = percent * duration;
     
     videoRef.current.currentTime = newTime;
-    sendMessage({ 
-      type: 'seek', 
-      sessionId: currentSession.sessionId, 
-      position: newTime 
-    });
   };
 
   if (videosLoading) {
@@ -237,7 +159,6 @@ export default function VideoPlayer() {
     );
   }
 
-  const currentVideo = videos?.find(v => v.id === currentSession?.videoId);
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
@@ -251,8 +172,8 @@ export default function VideoPlayer() {
           </div>
           <div className="flex items-center space-x-4">
             <div className="text-sm text-gray-400 flex items-center">
-              <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              {isConnected ? 'Connected to Server' : 'Disconnected'}
+              <div className={`w-2 h-2 rounded-full mr-2 ${currentVideo ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              {currentVideo ? 'Video Ready' : 'No Video'}
             </div>
           </div>
         </div>
@@ -264,8 +185,7 @@ export default function VideoPlayer() {
           <div className="video-container aspect-video relative group">
             {/* Status Indicator */}
             <div className={`status-indicator ${isPlaying ? 'streaming' : hasError ? 'error' : 'buffering'}`}>
-              <i className="fas fa-satellite-dish mr-2"></i>
-              <span>{isPlaying ? 'Live Stream' : hasError ? 'Error' : 'Buffering'}</span>
+              <span>{isPlaying ? 'Playing' : hasError ? 'Error' : 'Paused'}</span>
             </div>
 
             {/* Video Element */}
@@ -273,7 +193,8 @@ export default function VideoPlayer() {
               ref={videoRef}
               className="w-full h-full object-cover bg-black"
               playsInline
-              preload="none"
+              preload="metadata"
+              controls={false}
             />
 
             {/* Loading State */}
@@ -281,8 +202,8 @@ export default function VideoPlayer() {
               <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
                 <div className="text-center">
                   <div className="loading-spinner w-12 h-12 rounded-full mx-auto mb-4"></div>
-                  <p className="text-lg font-medium">Connecting to stream...</p>
-                  <p className="text-sm text-gray-400 mt-1">Please wait while we establish connection</p>
+                  <p className="text-lg font-medium">Loading video...</p>
+                  <p className="text-sm text-gray-400 mt-1">Please wait while we load the stream</p>
                 </div>
               </div>
             )}
@@ -291,15 +212,13 @@ export default function VideoPlayer() {
             {hasError && (
               <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
                 <div className="text-center error-pulse">
-                  <i className="fas fa-exclamation-triangle text-red-500 text-4xl mb-4"></i>
-                  <h3 className="text-xl font-semibold mb-2">Stream Unavailable</h3>
-                  <p className="text-gray-400 mb-4">Unable to connect to video stream</p>
+                  <h3 className="text-xl font-semibold mb-2">Video Unavailable</h3>
+                  <p className="text-gray-400 mb-4">Unable to load video stream</p>
                   <Button 
                     onClick={() => setHasError(false)}
                     className="bg-video-accent hover:bg-blue-600"
                   >
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    Retry Connection
+                    Retry
                   </Button>
                 </div>
               </div>
@@ -388,12 +307,12 @@ export default function VideoPlayer() {
         </Card>
 
         {/* Stream Information Panel */}
-        <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Stream Details */}
-          <div className="lg:col-span-2 bg-video-gray rounded-xl p-6">
+          <div className="bg-video-gray rounded-xl p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center">
               <Info className="text-video-accent mr-2" />
-              Stream Information
+              Video Information
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -401,8 +320,8 @@ export default function VideoPlayer() {
                 <p className="font-medium">{currentVideo?.filename || 'No video'}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-400">Stream Quality</label>
-                <p className="font-medium">1080p @ 30fps</p>
+                <label className="text-sm text-gray-400">Title</label>
+                <p className="font-medium">{currentVideo?.title || 'N/A'}</p>
               </div>
               <div>
                 <label className="text-sm text-gray-400">Duration</label>
@@ -415,76 +334,32 @@ export default function VideoPlayer() {
             </div>
           </div>
 
-          {/* Stream Controls */}
+          {/* Available Videos */}
           <div className="bg-video-gray rounded-xl p-6">
-            <h2 className="text-lg font-semibold mb-4 flex items-center">
-              <Settings className="text-video-accent mr-2" />
-              Stream Controls
-            </h2>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-gray-400 block mb-2">Seek to Time</label>
-                <div className="flex space-x-2">
-                  <Input 
-                    type="time" 
-                    step="1"
-                    value={seekTime}
-                    onChange={(e) => setSeekTime(e.target.value)}
-                    className="bg-video-control border-gray-600 flex-1"
-                  />
-                  <Button 
-                    onClick={seekToTime}
-                    className="bg-video-accent hover:bg-blue-600"
-                  >
-                    Seek
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Button 
-                  onClick={restartStream}
-                  className="w-full bg-video-control hover:bg-gray-600"
-                  variant="outline"
+            <h2 className="text-lg font-semibold mb-4">Available Videos</h2>
+            <div className="space-y-2">
+              {videos?.length ? videos.map((video) => (
+                <Button
+                  key={video.id}
+                  onClick={() => {
+                    console.log('Switching to video:', video);
+                    setCurrentVideo(video);
+                    if (videoRef.current) {
+                      const videoUrl = `/api/videos/${video.filename}/stream`;
+                      console.log('Setting new video URL:', videoUrl);
+                      videoRef.current.src = videoUrl;
+                      videoRef.current.load(); // Force reload of the video element
+                    }
+                  }}
+                  variant={currentVideo?.id === video.id ? "default" : "outline"}
+                  className="w-full justify-start"
                 >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Restart Stream
+                  <Play className="mr-2 h-4 w-4" />
+                  {video.title}
                 </Button>
-                <Button 
-                  onClick={stopStream}
-                  className="w-full bg-red-600 hover:bg-red-700"
-                  variant="destructive"
-                >
-                  <Square className="mr-2 h-4 w-4" />
-                  Stop Stream
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Technical Information */}
-        <div className="mt-8 bg-video-gray rounded-xl p-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center">
-            <TrendingUp className="text-video-accent mr-2" />
-            Technical Details
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-video-accent">45ms</div>
-              <div className="text-sm text-gray-400">Latency</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-400">3.2 Mbps</div>
-              <div className="text-sm text-gray-400">Bandwidth</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-400">0</div>
-              <div className="text-sm text-gray-400">Dropped Frames</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-400">{Math.floor(currentTime)}</div>
-              <div className="text-sm text-gray-400">Seconds Streamed</div>
+              )) : (
+                <p className="text-gray-400">No videos available</p>
+              )}
             </div>
           </div>
         </div>

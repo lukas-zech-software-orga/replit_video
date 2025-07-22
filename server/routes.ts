@@ -1,11 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { WebSocketServer, WebSocket } from "ws";
-import { storage } from "./storage";
-import { wsMessageSchema, type WSMessage } from "@shared/schema";
+import { discoverVideos, getVideoByFilename } from "./storage";
 import fs from "fs";
 import path from "path";
-import { nanoid } from "nanoid";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -13,7 +10,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all available videos
   app.get("/api/videos", async (req, res) => {
     try {
-      const videos = await storage.getAllVideos();
+      const videos = discoverVideos();
       res.json(videos);
     } catch (error) {
       console.error("Error fetching videos:", error);
@@ -22,10 +19,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get video metadata
-  app.get("/api/videos/:id", async (req, res) => {
+  app.get("/api/videos/:filename", async (req, res) => {
     try {
-      const videoId = parseInt(req.params.id);
-      const video = await storage.getVideo(videoId);
+      const filename = req.params.filename;
+      const video = getVideoByFilename(filename);
       
       if (!video) {
         return res.status(404).json({ message: "Video not found" });
@@ -38,11 +35,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Handle OPTIONS preflight requests
+  app.options("/api/videos/:filename/stream", (req, res) => {
+    res.set({
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range',
+    });
+    res.status(204).send();
+  });
+
   // Stream video with range support
-  app.get("/api/videos/:id/stream", async (req, res) => {
+  app.get("/api/videos/:filename/stream", async (req, res) => {
     try {
-      const videoId = parseInt(req.params.id);
-      const video = await storage.getVideo(videoId);
+      const filename = req.params.filename;
+      const video = getVideoByFilename(filename);
       
       if (!video) {
         return res.status(404).json({ message: "Video not found" });
@@ -75,6 +82,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Pragma': 'no-cache',
           'Expires': '0',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': 'Range',
         });
         
         file.pipe(res);
@@ -85,6 +95,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Pragma': 'no-cache',
           'Expires': '0',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': 'Range',
         });
         
         fs.createReadStream(videoPath).pipe(res);
@@ -94,123 +107,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to stream video" });
     }
   });
-
-  // Create streaming session
-  app.post("/api/sessions", async (req, res) => {
-    try {
-      const { videoId } = req.body;
-      
-      if (!videoId) {
-        return res.status(400).json({ message: "Video ID is required" });
-      }
-
-      const video = await storage.getVideo(videoId);
-      if (!video) {
-        return res.status(404).json({ message: "Video not found" });
-      }
-
-      const sessionId = nanoid();
-      const session = await storage.createStreamSession({
-        videoId,
-        sessionId,
-        currentPosition: 0,
-        isPlaying: false,
-      });
-
-      res.json(session);
-    } catch (error) {
-      console.error("Error creating session:", error);
-      res.status(500).json({ message: "Failed to create session" });
-    }
-  });
-
-  // WebSocket server for real-time stream control
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-
-  wss.on('connection', (ws: WebSocket) => {
-    console.log('WebSocket client connected');
-
-    ws.on('message', async (data: Buffer) => {
-      try {
-        const message = JSON.parse(data.toString()) as WSMessage;
-        const validatedMessage = wsMessageSchema.parse(message);
-        
-        console.log('Received message:', validatedMessage);
-        
-        switch (validatedMessage.type) {
-          case 'play':
-            await storage.updateStreamSession(validatedMessage.sessionId, { isPlaying: true });
-            broadcastToSession(validatedMessage.sessionId, {
-              type: 'status',
-              sessionId: validatedMessage.sessionId,
-              isPlaying: true,
-              currentPosition: 0,
-              duration: 0,
-            });
-            break;
-            
-          case 'pause':
-            await storage.updateStreamSession(validatedMessage.sessionId, { isPlaying: false });
-            broadcastToSession(validatedMessage.sessionId, {
-              type: 'status',
-              sessionId: validatedMessage.sessionId,
-              isPlaying: false,
-              currentPosition: 0,
-              duration: 0,
-            });
-            break;
-            
-          case 'seek':
-            await storage.updateStreamSession(validatedMessage.sessionId, { 
-              currentPosition: validatedMessage.position 
-            });
-            broadcastToSession(validatedMessage.sessionId, {
-              type: 'status',
-              sessionId: validatedMessage.sessionId,
-              isPlaying: true,
-              currentPosition: validatedMessage.position,
-              duration: 0,
-            });
-            break;
-            
-          case 'stop':
-            await storage.updateStreamSession(validatedMessage.sessionId, { 
-              isPlaying: false,
-              currentPosition: 0,
-            });
-            broadcastToSession(validatedMessage.sessionId, {
-              type: 'status',
-              sessionId: validatedMessage.sessionId,
-              isPlaying: false,
-              currentPosition: 0,
-              duration: 0,
-            });
-            break;
-        }
-      } catch (error) {
-        console.error('WebSocket message error:', error);
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ error: 'Invalid message format' }));
-        }
-      }
-    });
-
-    ws.on('close', () => {
-      console.log('WebSocket client disconnected');
-    });
-
-    ws.on('error', (error) => {
-      console.error('WebSocket error:', error);
-    });
-  });
-
-  function broadcastToSession(sessionId: string, message: WSMessage) {
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(message));
-      }
-    });
-  }
 
   return httpServer;
 }
